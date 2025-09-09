@@ -1,0 +1,5 @@
+.idea/
+src/config/config.conf
+src/config/env.conf
+src/netrc
+*.log

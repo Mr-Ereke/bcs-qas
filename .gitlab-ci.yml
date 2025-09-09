@@ -1,0 +1,288 @@
+include:
+  - project: 'devops/cicd/build-docker'
+    ref: master
+    file: 'templates/kaniko-build.yml'
+
+  - project: 'devops/cicd/deploy'
+    ref: master
+    file: '.deploy_k8s_helm.yaml'
+
+  - project: 'devops/cicd/deploy'
+    ref: master
+    file: '.uninstall-deployment-k8s-helm.yml'
+
+  - project: 'devops/cicd/deploy'
+    ref: master
+    file: '.restart_k8s_service.yaml'
+stages:
+  - build
+  - deploy
+  - uninstall
+  - restart_service
+image: docker:23.0.1-dind
+services:
+  - name: docker:23.0.1-dind
+    alias: docker
+    entrypoint: ["env", "-u", "DOCKER_HOST"]
+    command: ["dockerd-entrypoint.sh"]
+variables:
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: ""
+  KANIKO_IMAGE: "gcr.io/kaniko-project/executor:v1.13.0-debug"
+  DEPLOY_IMAGE: "gitlab.online-fx.com:5050/devops/devops-utils/helm-kubectl:3.10.3"
+  KANIKO_CACHE_ARGS: "--cache=true --cache-ttl=24h"
+  HELM_CHART_VERSION: "master"
+  BASE_IMAGE: "${CI_REGISTRY_IMAGE}/${CI_PROJECT_NAME}-base:latest"
+  PROJECT_ID: 146
+  HELM_CHART: --header PRIVATE-TOKEN:${HELM_CHART_REPO_TOKEN} ***/api/v4/projects/${PROJECT_ID}/repository/archive.tar.gz?sha=${HELM_CHART_VERSION}
+  NAMESPACE: ${CI_ENVIRONMENT_SLUG}
+  ACCESS_REPO: ${CI_SERVER_HOST}
+  BUILD_ARGS: >-
+    --build-arg GO_LANG_TAG
+    --build-arg ALPINE_TAG
+    --build-arg ACCESS_TOKEN_USER
+    --build-arg ACCESS_TOKEN
+    --build-arg ACCESS_REPO
+
+build-test:
+  image:
+    name: $KANIKO_IMAGE
+    entrypoint: [""]
+  extends: .build_with_kaniko
+  stage: build
+  variables:
+    DOCKERFILE_PATH: "Dockerfile"
+    CONTEXT_DIR: "${CI_PROJECT_DIR}"
+    DOCKER_IMAGE_NAME: "${CI_REGISTRY_IMAGE}/${CI_PROJECT_NAME}-${CI_COMMIT_REF_SLUG}:${CI_COMMIT_SHORT_SHA}"
+    KANIKO_CACHE_ARGS: "--cache=false"
+  tags:
+    - app
+    - test
+    - kubernetes
+  rules:
+    - if: $CI_COMMIT_REF_NAME =~ /^master$/ || $CI_COMMIT_REF_NAME =~ /^\w+-.*$/
+  environment:
+    name: test
+
+build-preprod:
+  image:
+    name: $KANIKO_IMAGE
+    entrypoint: [""]
+  extends: .build_with_kaniko
+  stage: build
+  variables:
+    DOCKERFILE_PATH: "Dockerfile"
+    CONTEXT_DIR: "${CI_PROJECT_DIR}"
+    DOCKER_IMAGE_NAME: "${CI_REGISTRY_IMAGE}/${CI_PROJECT_NAME}-${CI_COMMIT_REF_SLUG}:${CI_COMMIT_SHORT_SHA}"
+    KANIKO_CACHE_ARGS: "--cache=false"
+  tags:
+    - app
+    - preprod
+    - kubernetes
+  rules:
+    - if: $CI_COMMIT_REF_NAME =~ /^\d+\.\d+\.\d+-.*$/
+  environment:
+    name: preprod
+
+build-prod:
+  image:
+    name: $KANIKO_IMAGE
+    entrypoint: [""]
+  extends: .build_with_kaniko
+  stage: build
+  variables:
+    DOCKERFILE_PATH: "Dockerfile"
+    CONTEXT_DIR: "${CI_PROJECT_DIR}"
+    DOCKER_IMAGE_NAME: "${CI_REGISTRY_IMAGE}/${CI_PROJECT_NAME}-${CI_COMMIT_REF_SLUG}:${CI_COMMIT_SHORT_SHA}"
+    KANIKO_CACHE_ARGS: "--cache=false"
+  tags:
+    - app
+    - prod
+    - kubernetes
+  rules:
+    - if: $CI_COMMIT_REF_NAME =~ /^\d+\.\d+\.\d+$/
+  environment:
+    name: prod
+
+
+
+deploy-test:
+  stage: deploy
+  image:
+    name: ${DEPLOY_IMAGE}
+  extends: .deploy_k8s_helm
+  variables:
+    K8S_BASE_CONFIG: "${K8S_BASE_CONFIG_TEST}"
+    HELM_NAMESPACE: "${NAMESPACE}"
+    DOCKER_IMAGE_NAME: "${CI_REGISTRY_IMAGE}/${CI_PROJECT_NAME}-${CI_COMMIT_REF_SLUG}:${CI_COMMIT_SHORT_SHA}"
+    RELEASE_NAME: "${CI_PROJECT_NAME}"
+    CHART_APP_NAME: "${CI_PROJECT_NAME}"
+    CHART_APP_VERSION: "${CI_COMMIT_REF_SLUG}-${CI_COMMIT_SHORT_SHA}"
+  tags:
+    - app
+    - test
+    - kubernetes
+  rules:
+    - if: $CI_COMMIT_REF_NAME =~ /^master$/ || $CI_COMMIT_REF_NAME =~ /^\w+-.*$/
+      allow_failure: true
+  environment:
+    name: test
+
+deploy-preprod:
+  stage: deploy
+  image:
+    name: ${DEPLOY_IMAGE}
+  extends: .deploy_k8s_helm
+  variables:
+    K8S_BASE_CONFIG: "${K8S_BASE_CONFIG_PREPROD}"
+    HELM_NAMESPACE: "${NAMESPACE}"
+    DOCKER_IMAGE_NAME: "${CI_REGISTRY_IMAGE}/${CI_PROJECT_NAME}-${CI_COMMIT_REF_SLUG}:${CI_COMMIT_SHORT_SHA}"
+    RELEASE_NAME: "${CI_PROJECT_NAME}"
+    CHART_APP_NAME: "${CI_PROJECT_NAME}"
+    CHART_APP_VERSION: "${CI_COMMIT_REF_SLUG}-${CI_COMMIT_SHORT_SHA}"
+  tags:
+    - app
+    - preprod
+    - kubernetes
+  rules:
+    - if: $CI_COMMIT_REF_NAME =~ /^\d+\.\d+\.\d+-.*$/
+      allow_failure: true
+  environment:
+    name: preprod
+
+deploy-prod:
+  stage: deploy
+  image:
+    name: ${DEPLOY_IMAGE}
+  extends: .deploy_k8s_helm
+  allow_failure: false
+  variables:
+    K8S_BASE_CONFIG: "${K8S_BASE_CONFIG_PROD}"
+    HELM_NAMESPACE: "${NAMESPACE}"
+    DOCKER_IMAGE_NAME: "${CI_REGISTRY_IMAGE}/${CI_PROJECT_NAME}-${CI_COMMIT_REF_SLUG}:${CI_COMMIT_SHORT_SHA}"
+    RELEASE_NAME: "${CI_PROJECT_NAME}"
+    CHART_APP_NAME: "${CI_PROJECT_NAME}"
+    CHART_APP_VERSION: "${CI_COMMIT_REF_SLUG}-${CI_COMMIT_SHORT_SHA}"
+  tags:
+    - app
+    - prod
+    - kubernetes
+  rules:
+    - if: $CI_COMMIT_REF_NAME =~ /^\d+\.\d+\.\d+$/
+  environment:
+    name: prod
+
+uninstall-app-test:
+  stage: uninstall
+  image:
+    name: ${DEPLOY_IMAGE}
+  when: manual
+  tags:
+    - app
+    - test
+    - kubernetes
+  extends: .uninstall_deployment_k8s_helm
+  variables:
+    K8S_BASE_CONFIG: "${K8S_BASE_CONFIG_TEST}"
+    HELM_NAMESPACE: "${NAMESPACE}"
+    DOCKER_IMAGE_NAME: "${CI_REGISTRY_IMAGE}/${CI_PROJECT_NAME}-${CI_COMMIT_REF_SLUG}:${CI_COMMIT_SHORT_SHA}"
+    RELEASE_NAME: "${CI_PROJECT_NAME}"
+    CHART_APP_NAME: "${CI_PROJECT_NAME}"
+    CHART_APP_VERSION: "${CI_COMMIT_REF_SLUG}-${CI_COMMIT_SHORT_SHA}"
+  rules:
+    - if: $CI_COMMIT_REF_NAME =~ /^master$/ || $CI_COMMIT_REF_NAME =~ /^\w+-.*$/
+      allow_failure: true
+  environment:
+    name: test
+
+
+uninstall-app-preprod:
+  stage: uninstall
+  image:
+    name: ${DEPLOY_IMAGE}
+  allow_failure: false
+  when: manual
+  tags:
+    - app
+    - preprod
+    - kubernetes
+  extends: .uninstall_deployment_k8s_helm
+  variables:
+    K8S_BASE_CONFIG: "${K8S_BASE_CONFIG_PREPROD}"
+    HELM_NAMESPACE: "${NAMESPACE}"
+    DOCKER_IMAGE_NAME: "${CI_REGISTRY_IMAGE}/${CI_PROJECT_NAME}-${CI_COMMIT_REF_SLUG}:${CI_COMMIT_SHORT_SHA}"
+    RELEASE_NAME: "${CI_PROJECT_NAME}"
+    CHART_APP_NAME: "${CI_PROJECT_NAME}"
+    CHART_APP_VERSION: "${CI_COMMIT_REF_SLUG}-${CI_COMMIT_SHORT_SHA}"
+  rules:
+    - if: $CI_COMMIT_REF_NAME =~ /^\d+\.\d+\.\d+-.*$/
+      allow_failure: true
+  environment:
+    name: preprod
+
+restart-app-test:
+  stage: restart_service
+  image:
+    name: ${DEPLOY_IMAGE}
+  when: manual
+  needs: []
+  allow_failure: true
+  tags:
+    - app
+    - test
+    - kubernetes
+  extends: .restart_k8s_deployment
+  variables:
+    K8S_BASE_CONFIG: "${K8S_BASE_CONFIG_TEST}"
+    HELM_NAMESPACE: "${NAMESPACE}"
+    DOCKER_IMAGE_NAME: "${CI_REGISTRY_IMAGE}/${CI_PROJECT_NAME}-${CI_COMMIT_REF_SLUG}:${CI_COMMIT_SHORT_SHA}"
+    RELEASE_NAME: "${CI_PROJECT_NAME}"
+    CHART_APP_NAME: "${CI_PROJECT_NAME}"
+    CHART_APP_VERSION: "${CI_COMMIT_REF_SLUG}-${CI_COMMIT_SHORT_SHA}"
+  environment:
+    name: test
+
+
+restart-app-preprod:
+  stage: restart_service
+  image:
+    name: ${DEPLOY_IMAGE}
+  allow_failure: true
+  when: manual
+  needs: []
+  tags:
+    - app
+    - preprod
+    - kubernetes
+  extends: .restart_k8s_deployment
+  variables:
+    K8S_BASE_CONFIG: "${K8S_BASE_CONFIG_PREPROD}"
+    HELM_NAMESPACE: "${NAMESPACE}"
+    DOCKER_IMAGE_NAME: "${CI_REGISTRY_IMAGE}/${CI_PROJECT_NAME}-${CI_COMMIT_REF_SLUG}:${CI_COMMIT_SHORT_SHA}"
+    RELEASE_NAME: "${CI_PROJECT_NAME}"
+    CHART_APP_NAME: "${CI_PROJECT_NAME}"
+    CHART_APP_VERSION: "${CI_COMMIT_REF_SLUG}-${CI_COMMIT_SHORT_SHA}"
+  environment:
+    name: preprod
+
+restart-app-prod:
+  stage: restart_service
+  image:
+    name: ${DEPLOY_IMAGE}
+  allow_failure: true
+  when: manual
+  needs: []
+  tags:
+    - app
+    - prod
+    - kubernetes
+  extends: .restart_k8s_deployment
+  variables:
+    K8S_BASE_CONFIG: "${K8S_BASE_CONFIG_PROD}"
+    HELM_NAMESPACE: "${NAMESPACE}"
+    DOCKER_IMAGE_NAME: "${CI_REGISTRY_IMAGE}/${CI_PROJECT_NAME}-${CI_COMMIT_REF_SLUG}:${CI_COMMIT_SHORT_SHA}"
+    RELEASE_NAME: "${CI_PROJECT_NAME}"
+    CHART_APP_NAME: "${CI_PROJECT_NAME}"
+    CHART_APP_VERSION: "${CI_COMMIT_REF_SLUG}-${CI_COMMIT_SHORT_SHA}"
+  environment:
+    name: prod

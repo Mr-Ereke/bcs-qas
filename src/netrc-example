@@ -1,0 +1,4 @@
+
+machine gitlab.online-fx.com
+login golang_user
+password user_pass

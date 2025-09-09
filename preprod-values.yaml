@@ -1,0 +1,107 @@
+name: &name quotes-alerting-service
+port: &port 9175
+image:
+  pullPolicy: Always
+  pullSecrets: regcred
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/path: "/metrics"
+  prometheus.io/port: "9175"
+
+securityContext:
+  runAsUser: 1000
+  fsGroup: 1000
+  fsGroupChangePolicy: "OnRootMismatch"
+volumes:
+  - name: config
+    configMap:
+      name: *name
+  - name: *name
+    secret:
+      secretName: *name
+
+replicaCount: 1
+envSecretEnabled: true
+service:
+  name: *name
+  ingressPort: *port
+  deploymentPorts:
+    - name: metrics
+      containerPort: *port
+      protocol: TCP
+  servicePorts:
+    - name: metrics
+      port: *port
+      targetPort: *port
+      protocol: TCP
+
+ingress:
+   enabled: true
+   ingressPrefix: *name
+   innerSuffix: preprod.k8s-preprod.markets.local
+   externalEnabled: false
+   path: /
+
+livenessProbeEnabled: true
+livenessProbe:
+  httpGet:
+    path: /metrics
+    port: *port
+  initialDelaySeconds: 10
+  periodSeconds: 20
+  timeoutSeconds: 5
+  failureThreshold: 7
+  successThreshold: 1
+
+readinessProbeEnabled: true
+readinessProbe:
+  httpGet:
+    path: /metrics
+    port: *port
+  initialDelaySeconds: 10
+  periodSeconds: 20
+  timeoutSeconds: 5
+  failureThreshold: 6
+  successThreshold: 1
+
+resources:
+  limits:
+    cpu: 4
+    memory: 2Gi
+  requests:
+    cpu: 400m
+    memory: 512Mi
+env:
+  CONTAINER_NAME: *name
+  TZ: 'Asia/Nicosia'
+  SERVICE_PORT: *port
+
+  DATABASE_HOST: '***'
+  DATABASE_PORT: 5000
+  DATABASE_USER: qas_user
+  DATABASE_NAME: quotes_alerting_service
+  DATABASE_SCHEMA: qas_schema
+
+  REDIS_ADDRESS: '***'
+  REDIS_PORT: 6379
+  REDIS_DB_NUMBER: 0
+  REDIS_PING_TIMEOUT: 10
+
+  # Bellhop push
+  BELLHOP_HOST: '***'
+  BELLHOP_TIMEOUT: 5
+  BELLHOP_PUSH_NAME: 'PUSH-QAS'
+
+  # Настройки сервиса
+  MAX_COUNT_ALERTS_CUSTOMER_INSTRUMENT: 20
+  MAX_COUNT_ALERTS_CUSTOMER: 100
+
+  #Настройки метрики
+  METRICS_LONG_PUSH_TIME: 1000
+
+  # Временная зона
+  TIMEZONE: 'Africa/Johannesburg'
+
+  HAS_WRITE_LOG_TO_FILE: false
+  # Log levels
+  LOG_LEVEL: 4

@@ -1,0 +1,26 @@
+FROM golang:1.22.7-alpine3.19 as Builder
+LABEL stage=builder
+
+RUN apk add --update  && \
+    apk add --no-cache alpine-conf tzdata git
+
+ADD ./src /go/src/app
+ADD ./src/log /go/log
+ADD ./src/config /go/config
+ADD ./src/netrc /root/.netrc
+
+RUN cd /go/src/app && \
+    go install app
+
+
+FROM alpine:3.18.4 as App
+
+COPY --from=Builder /go/bin/* /go/bin/app
+COPY --from=Builder /go/log /go/log
+COPY --from=Builder /go/config /go/config
+COPY --from=Builder /usr/share/zoneinfo /usr/share/zoneinfo
+ENV TZ=Asia/Nicosia
+
+WORKDIR "/go"
+ENTRYPOINT ["/go/bin/app"]
+
